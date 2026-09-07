@@ -1,0 +1,24 @@
+appId: com.deekai.desktop
+productName: DeekAI
+directories:
+  buildResources: build
+  output: release
+files:
+  - out/**
+  - package.json
+  - "!src/**"
+  - "!out/**/*.map"
+asar: true
+compression: normal
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  artifactName: DeekAI-Setup-${version}.${ext}
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+  shortcutName: DeekAI
