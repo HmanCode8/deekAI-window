@@ -1,10 +1,13 @@
 import type { ChatMessage, UploadedAttachment } from "@shared/attachments";
 import type { ChatState } from "@shared/chat-types";
+import type { ModelTarget } from "@shared/model-profiles";
 import type {
   BridgeKind,
   DesktopDeeplink,
   ExportPdfInput,
   ExportPdfResult,
+  ListModelsInput,
+  ListModelsResult,
   PublicConfig,
   WritableConfig,
 } from "@shared/bridge-api";
@@ -33,14 +36,24 @@ export function adoptOrphans(token: string, userId: string): void {
   bridge.adoptOrphans(token, userId).catch(() => {});
 }
 
-export async function uploadFile(file: File): Promise<UploadedAttachment> {
+/** 上传附件（需带上模型目标，决定用哪个服务的 Files API） */
+export async function uploadFile(
+  file: File,
+  target?: ModelTarget | null
+): Promise<UploadedAttachment> {
   const bytes = await file.arrayBuffer();
   return bridge.uploadFile({
     name: file.name,
     type: file.type,
     size: file.size,
     bytes,
+    target,
   });
+}
+
+/** 拉取模型服务可用模型列表（设置面板用） */
+export function listModels(input: ListModelsInput): Promise<ListModelsResult> {
+  return bridge.listModels(input);
 }
 
 export interface StreamHandle {
@@ -55,7 +68,7 @@ export interface StreamHandle {
  */
 export function streamChat(
   messages: ChatMessage[],
-  model: string,
+  target: ModelTarget,
   onDelta: (text: string) => void
 ): StreamHandle {
   const id = crypto.randomUUID();
@@ -91,7 +104,7 @@ export function streamChat(
     }
   });
 
-  bridge.chatStart({ id, messages, model }).catch((err: unknown) => {
+  bridge.chatStart({ id, messages, target }).catch((err: unknown) => {
     unsubscribe();
     rejectPromise(err instanceof Error ? err : new Error(String(err)));
   });

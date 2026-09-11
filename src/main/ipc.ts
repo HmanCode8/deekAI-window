@@ -14,9 +14,11 @@ import type {
   DesktopDeeplink,
   ExportPdfInput,
 } from "@shared/bridge-api";
+import { sanitizeModelTarget, toResolvedModel } from "@shared/model-profiles";
 import { configManager } from "./config";
 import { streamChat } from "../backend/deepseek";
 import { handleUpload } from "../backend/uploads";
+import { listModels } from "../backend/models";
 import { adoptOrphanRows } from "../backend/supabase-admin";
 
 /**
@@ -61,12 +63,14 @@ export function registerIpcHandlers(): void {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win || !payload?.id) return;
 
-    const apiKey = configManager.get("DEEPSEEK_API_KEY");
-    if (!apiKey) {
+    const profile = toResolvedModel(sanitizeModelTarget(payload.target), (id) =>
+      configManager.resolveModel(id)
+    );
+    if (!profile.apiKey) {
       sendToWindow(win, {
         id: payload.id,
         type: "error",
-        message: "未配置模型 API Key，请在设置中填写",
+        message: `「${profile.name}」未配置 API Key，请在设置 → 模型设置中填写`,
       });
       return;
     }
@@ -74,18 +78,12 @@ export function registerIpcHandlers(): void {
     const controller = new AbortController();
     activeStreams.set(payload.id, controller);
 
-    const fallbackModel = configManager.get("DEEPSEEK_MODEL");
-    const baseUrl = configManager.get("DEEPSEEK_BASE_URL");
-
     try {
       await streamChat(
         {
           id: payload.id,
           messages: payload.messages,
-          model: typeof payload.model === "string" ? payload.model : undefined,
-          apiKey,
-          baseUrl,
-          fallbackModel,
+          profile,
           signal: controller.signal,
         },
         (eventPayload) => sendToWindow(win, eventPayload)
@@ -118,9 +116,29 @@ export function registerIpcHandlers(): void {
     ) {
       throw new Error("缺少上传文件内容");
     }
-    return handleUpload(input as Parameters<typeof handleUpload>[0], {
-      apiKey: configManager.get("DEEPSEEK_API_KEY"),
-      baseUrl: configManager.get("DEEPSEEK_BASE_URL"),
+    const payload = input as Parameters<typeof handleUpload>[0];
+    const profile = toResolvedModel(sanitizeModelTarget(payload.target), (id) =>
+      configManager.resolveModel(id)
+    );
+    return handleUpload(payload, profile);
+  });
+
+  // 拉取模型服务可用模型列表：优先用表单里正在编辑的值，缺省回读已保存的条目
+  ipcMain.handle("models:list", (_event, input: unknown) => {
+    const { baseUrl, apiKey, profileId } = (input ?? {}) as {
+      baseUrl?: string;
+      apiKey?: string;
+      profileId?: string;
+    };
+
+    if (baseUrl?.trim() && apiKey?.trim()) {
+      return listModels({ baseUrl, apiKey });
+    }
+
+    const profile = configManager.resolveModel(profileId);
+    return listModels({
+      baseUrl: baseUrl?.trim() || profile.baseUrl,
+      apiKey: apiKey?.trim() || profile.apiKey,
     });
   });
 

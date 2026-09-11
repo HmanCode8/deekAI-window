@@ -1,13 +1,18 @@
 import {
-  VISION_MODEL_ID,
+  MODELS,
   type ChatMessage,
   type UploadedAttachment,
 } from "@shared/attachments";
 import type { ChatStreamEvent } from "@shared/bridge-api";
+import {
+  DEFAULT_MODEL_BASE_URL,
+  type ResolvedModel,
+} from "@shared/model-profiles";
 
 /**
- * DeepSeek 流式对话（主进程）：组装视觉/文档上下文 -> 请求上游 -> SSE 解析 -> 事件推送。
- * 逻辑与网页版 app/api/chat/route.ts 保持一致，密钥仅存在于主进程。
+ * 模型流式对话（主进程/服务端）：组装视觉/文档上下文 -> 请求上游 -> SSE 解析 -> 事件推送。
+ * 走标准 OpenAI 兼容协议（{baseUrl}/chat/completions），与具体厂商无关；
+ * 条目信息由配置层解析成 ResolvedModel 传入，这里不关心它来自哪个厂商。
  */
 
 type DeepSeekContentPart =
@@ -27,15 +32,10 @@ type DeepSeekMessage =
 export interface StreamChatParams {
   id: string;
   messages: ChatMessage[];
-  model?: string;
-  apiKey: string;
-  /** 模型服务 Base URL（OpenAI 兼容），默认 DeepSeek 官方 */
-  baseUrl?: string | null;
-  fallbackModel?: string | null;
+  /** 解析好的模型条目（含密钥、Base URL、模型名与文件能力） */
+  profile: ResolvedModel;
   signal?: AbortSignal;
 }
-
-export const DEFAULT_MODEL_BASE_URL = "https://api.deepseek.com";
 
 export function resolveChatCompletionsUrl(baseUrl?: string | null): string {
   const base = (baseUrl?.trim() || DEFAULT_MODEL_BASE_URL).replace(/\/+$/, "");
@@ -67,10 +67,8 @@ function hasImageAttachments(messages: ChatMessage[]) {
 
 function toDeepSeekMessages(
   messages: ChatMessage[],
-  model: string
+  supportsVision: boolean
 ): DeepSeekMessage[] {
-  const supportsVision = model === VISION_MODEL_ID;
-
   return messages.map((message) => {
     if (message.role === "assistant") {
       return {
@@ -131,17 +129,24 @@ export async function streamChat(
   params: StreamChatParams,
   emit: (event: ChatStreamEvent) => void
 ): Promise<void> {
-  const { id, apiKey, signal } = params;
+  const { id, signal, profile } = params;
+  const apiKey = profile.apiKey;
   const chatMessages = params.messages as ChatMessage[];
-  const model = hasImageAttachments(chatMessages)
-    ? VISION_MODEL_ID
-    : params.model || params.fallbackModel || "deepseek-v4-flash";
+  // 仅当条目声明了视觉模型（目前是 DeepSeek）且消息里含图片时才切换，避免把别的厂商的模型名覆盖掉
+  const model =
+    hasImageAttachments(chatMessages) && profile.visionModel
+      ? profile.visionModel
+      : profile.model || MODELS[0].id;
 
-  const upstreamMessages = toDeepSeekMessages(chatMessages, model);
+  // 只有条目具备 Files API（能引用 file_id）时才把图片作为内容块发上去
+  const upstreamMessages = toDeepSeekMessages(
+    chatMessages,
+    profile.supportsFiles
+  );
 
   let response: Response;
   try {
-    response = await fetch(resolveChatCompletionsUrl(params.baseUrl), {
+    response = await fetch(resolveChatCompletionsUrl(profile.baseUrl), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

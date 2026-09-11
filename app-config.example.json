@@ -10,8 +10,12 @@
 
   "PUBLIC_WEB_URL": "https://your-site.com",
 
-  "_模型说明": "以下为可选默认值：不填则用户需在「我的模型」里自带 Base URL + Key（BYOK）",
+  "_模型说明": "以下为可选的「运营方预置条目」：填了会成为所有人可见、只读的内置模型（共享同一份 Key）。一般留空，让用户在「设置 → 模型设置」里自带 Base URL + Key + 模型名（BYOK，条目存本机、按账号隔离）。",
   "DEEPSEEK_BASE_URL": "https://api.deepseek.com",
-  "DEEPSEEK_MODEL": "deepseek-chat",
-  "DEEPSEEK_API_KEY": "如需服务方统一出 Key（用户无需自带）可填在此处"
+  "DEEPSEEK_MODEL": "deepseek-v4-flash",
+  "DEEPSEEK_API_KEY": "填了就是全员共享的内置条目；留空则用户自带 Key",
+
+  "_多模型说明": "可选：随包预置多条共享模型（JSON 数组字符串）。一般不需要，交给用户在应用内添加即可。",
+  "MODEL_PROFILES": "[]",
+  "DEFAULT_MODEL_PROFILE": ""
 }

@@ -8,27 +8,16 @@ import {
   type UploadedAttachment,
 } from "@shared/attachments";
 import type { UploadInput } from "@shared/bridge-api";
+import { DEFAULT_MODEL_BASE_URL, type ResolvedModel } from "@shared/model-profiles";
 
 /**
- * 文件处理（主进程/服务端）：图片 -> 模型服务的 Files API；文档 -> 本地解析为文本。
- * 逻辑与网页版 app/api/upload/route.ts 保持一致，额外支持自定义 Base URL。
+ * 文件处理（主进程/服务端）：
+ * - 图片 -> 模型服务的 Files API（{baseUrl}/files），只有声明了 supportsFiles 的条目可用
+ * - 文档 -> 本地解析为文本（PDF / DOCX / 文本代码），与厂商无关，任何条目都能用
  */
 
 const MAX_FILE_SIZE = 64 * 1024 * 1024;
 const MAX_EXTRACTED_CHARS = 12000;
-const DEFAULT_BASE_URL = "https://api.deepseek.com";
-
-export interface UploadOptions {
-  apiKey: string | null;
-  /** 模型服务 Base URL（目前仅 DeepSeek 官方提供 Files API） */
-  baseUrl?: string | null;
-}
-
-/** 目前仅 DeepSeek 官方地址支持「上传文件后引用」的 Files API */
-export function supportsFileUpload(baseUrl?: string | null): boolean {
-  const base = (baseUrl?.trim() || DEFAULT_BASE_URL).toLowerCase();
-  return base.includes("api.deepseek.com");
-}
 
 function normalizeWhitespace(text: string) {
   return text.replace(/\r\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
@@ -84,7 +73,7 @@ async function uploadImageToDeepSeek(
   formData.append("purpose", "user_data");
   formData.append("file", blob, name);
 
-  const base = (baseUrl?.trim() || DEFAULT_BASE_URL).replace(/\/+$/, "");
+  const base = (baseUrl?.trim() || DEFAULT_MODEL_BASE_URL).replace(/\/+$/, "");
 
   const response = await fetch(`${base}/files`, {
     method: "POST",
@@ -111,12 +100,12 @@ async function uploadImageToDeepSeek(
 
 export async function handleUpload(
   input: UploadInput,
-  options: UploadOptions
+  profile: ResolvedModel
 ): Promise<UploadedAttachment> {
-  const { apiKey, baseUrl } = options;
+  const { apiKey, baseUrl } = profile;
 
   if (!apiKey) {
-    throw new Error("未配置模型 API Key，请在设置中填写");
+    throw new Error(`「${profile.name}」未配置 API Key，请在设置中填写`);
   }
 
   if (!input?.name) {
@@ -134,9 +123,9 @@ export async function handleUpload(
   const meta = { type: mimeType, name: input.name };
 
   if (isSupportedImage(meta)) {
-    if (!supportsFileUpload(baseUrl)) {
+    if (!profile.supportsFiles) {
       throw new Error(
-        "当前模型服务不支持图片上传（缺少 Files API），请改用文档类附件，或在设置里把 Base URL 换回 DeepSeek 官方地址"
+        `「${profile.name}」不支持图片附件（缺少 Files API）。请改用文档类附件（PDF/DOCX/TXT 等），或切换到提供 Files API 的模型条目（如 DeepSeek）。`
       );
     }
 

@@ -20,6 +20,9 @@ export default defineConfig({
   },
   server: {
     port: 5174,
+    // 端口被占用时直接报错，不要静默换端口：
+    // localStorage 按 origin 隔离，端口一变（5174→5175）用户在本机配的模型条目就"消失"了
+    strictPort: true,
     proxy: {
       "/api": {
         // 与 src/server/index.ts 保持一致：SERVER_PORT 优先，其次 PORT

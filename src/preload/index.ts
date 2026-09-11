@@ -35,6 +35,7 @@ const bridge: DeekaiBridge = {
     };
   },
   uploadFile: (input) => ipcRenderer.invoke("upload:file", input),
+  listModels: (input) => ipcRenderer.invoke("models:list", input),
   adoptOrphans: (token, userId) =>
     ipcRenderer.invoke("supabase:adopt", { token, userId }),
   openExternal: (url) => {

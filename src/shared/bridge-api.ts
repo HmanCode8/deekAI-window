@@ -1,12 +1,16 @@
 import type { ChatMessage, UploadedAttachment } from "./attachments";
 import type { StoreMode } from "./chat-types";
+import type { ModelTarget, PublicModelProfile } from "./model-profiles";
+
+// 渲染进程只需要公开结构；含密钥的 ResolvedModel 留在后端使用
+export type { PublicModelProfile };
 
 // 主进程 <-> 渲染进程 桥接层类型定义（与网页版 lib/auth.ts 的错误文案同源）
 
 /** 发行版本：release = 面向普通用户（内部配置隐藏）；advanced = 自托管/开发者版 */
 export type Edition = "release" | "advanced";
 
-/** 渲染进程可见的公开配置（不含 DeepSeek Key / service_role 等敏感值） */
+/** 渲染进程可见的公开配置（不含模型 API Key / service_role 等敏感值） */
 export interface PublicConfig {
   /** 实际生效的存储模式 */
   store: StoreMode;
@@ -14,12 +18,11 @@ export interface PublicConfig {
   supabaseConfigured: boolean;
   supabaseUrl: string | null;
   supabaseAnonKey: string | null;
-  /** 模型 API Key 是否已配置（发行内置或用户自带） */
-  deepseekConfigured: boolean;
-  /** 默认模型 */
-  model: string | null;
-  /** 模型服务 Base URL（非敏感，用于设置页回显） */
-  modelBaseUrl: string | null;
+  /**
+   * 运营方预置的模型条目（来自 app-config.json / .env，只读、不含 Key）。
+   * 用户自己的条目存在本机 / 浏览器本地，不下发到这里，见 renderer 的 lib/model-profiles.ts。
+   */
+  serverModelProfiles: PublicModelProfile[];
   /** 分享站点地址（网页端部署地址，用于拼接分享链接） */
   publicWebUrl: string | null;
   /** 当前发行版本 */
@@ -39,9 +42,6 @@ export interface WritableConfig {
   SUPABASE_ANON_KEY?: string;
   SUPABASE_SERVICE_ROLE_KEY?: string;
   PUBLIC_WEB_URL?: string;
-  DEEPSEEK_API_KEY?: string;
-  DEEPSEEK_BASE_URL?: string;
-  DEEPSEEK_MODEL?: string;
 }
 
 /** 流式对话事件（主进程 -> 渲染进程） */
@@ -54,7 +54,8 @@ export type ChatStreamEvent =
 export interface ChatStartPayload {
   id: string;
   messages: ChatMessage[];
-  model?: string;
+  /** 用哪条模型配置：服务端条目（传 id）或本机条目（内联地址与 Key） */
+  target: ModelTarget;
 }
 
 export interface UploadInput {
@@ -62,6 +63,21 @@ export interface UploadInput {
   type: string;
   size: number;
   bytes: ArrayBuffer;
+  /** 用哪条模型配置决定上传目标；缺省则用服务端默认条目 */
+  target?: ModelTarget | null;
+}
+
+/** 拉取某个模型服务实际可用的模型列表（GET {baseUrl}/models） */
+export interface ListModelsInput {
+  /** 优先用表单里正在编辑的地址与 Key，缺省则回读服务端的条目 */
+  baseUrl?: string | null;
+  apiKey?: string | null;
+  profileId?: string | null;
+}
+
+export interface ListModelsResult {
+  models: string[];
+  error?: string;
 }
 
 export interface ExportPdfInput {
@@ -100,6 +116,8 @@ export interface DeekaiBridge {
   /** 注册流式事件监听（重复注册会替换旧的） */
   onChatEvent(cb: (event: ChatStreamEvent) => void): () => void;
   uploadFile(input: UploadInput): Promise<UploadedAttachment>;
+  /** 拉取模型服务实际可用的模型列表（供设置面板选择） */
+  listModels(input: ListModelsInput): Promise<ListModelsResult>;
   /** 老数据认领（使用 service role，一次性的系统操作） */
   adoptOrphans(token: string, userId: string): Promise<{ adopted: boolean }>;
   openExternal(url: string): void;

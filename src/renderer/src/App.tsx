@@ -1,9 +1,15 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import type { PublicConfig } from "@shared/bridge-api";
 import Chat from "./components/Chat";
 import SettingsDialog from "./components/SettingsDialog";
 import * as api from "./lib/api";
 import { useTheme } from "./lib/theme";
+import {
+  clearSession,
+  SESSION_EXPIRED_MESSAGES,
+  useSessionGuard,
+  type SessionExpiryReason,
+} from "./lib/session";
 import {
   getSupabase,
   initSupabase,
@@ -32,6 +38,8 @@ export default function App() {
   const [memoryMode, setMemoryMode] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [adopted, setAdopted] = useState<Set<string>>(new Set());
+  /** 会话过期后给登录页的提示文案 */
+  const [expiredNotice, setExpiredNotice] = useState("");
   const { mode: themeMode, setMode: setThemeMode } = useTheme();
   const [shareToken, setShareToken] = useState<string | null>(() =>
     readShareToken()
@@ -98,6 +106,8 @@ export default function App() {
   useEffect(() => {
     if (!user || adopted.has(user.id)) return;
     setAdopted((prev) => new Set(prev).add(user.id));
+    // 模型条目的"登录前配置 → 归到账号名下 + 云端同步"由 useModelOptions 的
+    // syncModelStore() 统一处理，这里不重复做，避免时序打架。
     getSupabase()
       .auth.getSession()
       .then(({ data }) => {
@@ -109,12 +119,35 @@ export default function App() {
   }, [user, adopted]);
 
   const logout = async () => {
+    // 主动退出要清掉会话计时，下次登录重新开始计算
+    clearSession();
     try {
       await getSupabase().auth.signOut();
     } catch {
       // 忽略登出异常，回到未登录视图即可
     }
   };
+
+  /** 会话到期（空闲超时 / 累计上限）：清掉计时并强制登出 */
+  const handleSessionExpire = useCallback((reason: SessionExpiryReason) => {
+    clearSession();
+    setExpiredNotice(SESSION_EXPIRED_MESSAGES[reason]);
+    try {
+      getSupabase()
+        .auth.signOut()
+        .catch(() => {});
+    } catch {
+      // Supabase 未初始化时忽略
+    }
+  }, []);
+
+  // 空闲 30 分钟 / 累计 7 天自动登出（Supabase 自身会无限续期，这里补上限制）
+  useSessionGuard(Boolean(user), handleSessionExpire);
+
+  // 重新登录成功后清掉上次的过期提示
+  useEffect(() => {
+    if (user) setExpiredNotice("");
+  }, [user]);
 
   const openSettings = () => setSettingsOpen(true);
   const closeSettings = () => setSettingsOpen(false);
@@ -148,13 +181,12 @@ export default function App() {
       <Chat
         userId={user.id}
         store="supabase"
-        deepseekConfigured={config.deepseekConfigured}
-        defaultModel={config.model}
+        serverModelProfiles={config.serverModelProfiles}
         onOpenSettings={openSettings}
         publicWebUrl={config.publicWebUrl}
       />
     ) : (
-      <Login onOpenSettings={openSettings} />
+      <Login onOpenSettings={openSettings} expiredNotice={expiredNotice} />
     );
   } else if (!memoryMode) {
     view = (
@@ -168,8 +200,7 @@ export default function App() {
       <Chat
         userId={null}
         store="memory"
-        deepseekConfigured={config.deepseekConfigured}
-        defaultModel={config.model}
+        serverModelProfiles={config.serverModelProfiles}
         onOpenSettings={openSettings}
         onExitMemory={() => setMemoryMode(false)}
         publicWebUrl={config.publicWebUrl}

@@ -23,15 +23,16 @@ import {
   User,
 } from "lucide-react";
 import type { ChatMessage, UploadedAttachment } from "@shared/attachments";
-import { MODELS, VISION_MODEL_ID } from "@shared/attachments";
+import { isSupportedImage } from "@shared/attachments";
 import type { Conversation, Project } from "@shared/chat-types";
-import type { DesktopDeeplink } from "@shared/bridge-api";
+import type { DesktopDeeplink, PublicModelProfile } from "@shared/bridge-api";
 import {
   buildConversationHtml,
   buildMessagesHtml,
   exportFileName,
 } from "../lib/export-pdf";
 import { useAvatar } from "../lib/profile";
+import { useModelOptions } from "../lib/model-profiles";
 import * as api from "../lib/api";
 
 const UNGROUPED_KEY = "__ungrouped__";
@@ -39,12 +40,11 @@ const UNGROUPED_KEY = "__ungrouped__";
 const SIDEBAR_KEY = "deekai:sidebar:collapsed";
 
 export interface ChatProps {
-  /** 当前登录用户 id（用于读取本机头像）；内存模式为 null */
+  /** 当前登录用户 id（用于读取本机头像与本机模型条目）；内存模式为 null */
   userId: string | null;
   store: "memory" | "supabase";
-  deepseekConfigured: boolean;
-  /** 默认模型（来自设置；不在内置清单中时会追加到选择器） */
-  defaultModel: string | null;
+  /** 运营方预置的模型条目（只读）；用户自己的条目由本机存储按账号合并进来 */
+  serverModelProfiles: PublicModelProfile[];
   onOpenSettings: () => void;
   /** 仅 memory 模式下可退出回到引导页 */
   onExitMemory?: () => void;
@@ -59,8 +59,7 @@ export interface ChatProps {
 export default function Chat({
   userId,
   store,
-  deepseekConfigured,
-  defaultModel,
+  serverModelProfiles,
   onOpenSettings,
   onExitMemory,
   publicWebUrl,
@@ -70,7 +69,6 @@ export default function Chat({
   const [activeId, setActiveId] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
-  const [model, setModel] = useState<string>(defaultModel ?? MODELS[0].id);
   const [pendingAttachments, setPendingAttachments] = useState<
     UploadedAttachment[]
   >([]);
@@ -99,6 +97,15 @@ export default function Chat({
     }
   });
   const userAvatar = useAvatar(userId);
+
+  /**
+   * 模型选项 = 本机条目（按账号存 localStorage）+ 运营方预置条目（只读）。
+   * 选中项按账号记住；条目被删时自动回退。
+   */
+  const { options: modelOptions, selected: currentProfile, setSelectedId } =
+    useModelOptions(userId, serverModelProfiles, store === "supabase");
+  /** 当前条目是否支持图片附件（没有 Files API 的厂商只能发文档类附件） */
+  const canUploadImages = currentProfile?.supportsFiles ?? false;
 
   const toggleSidebar = () => {
     setSidebarCollapsed((prev) => {
@@ -261,19 +268,40 @@ export default function Chat({
   const uploadFiles = async (files: FileList | File[] | null) => {
     if (!files?.length) return;
 
+    const list = Array.from(files);
+
+    // 当前模型条目没有 Files API 时，图片附件直接拦在本地，避免白传一趟再报错
+    if (!canUploadImages) {
+      const blocked = list.filter((file) =>
+        isSupportedImage({ type: file.type, name: file.name })
+      );
+      if (blocked.length > 0) {
+        window.alert(
+          `「${currentProfile?.name ?? "当前模型"}」不支持图片附件。\n请改用文档类附件（PDF / DOCX / TXT 等），或在设置 → 模型设置里切换到支持 Files API 的条目（如 DeepSeek）。`
+        );
+        if (blocked.length === list.length) return;
+      }
+    }
+
     setUploading(true);
 
     try {
       const uploaded = await Promise.all(
-        Array.from(files).map(async (file) => {
-          try {
-            return await api.uploadFile(file);
-          } catch (err) {
-            throw new Error(
-              `${file.name} 上传失败：${(err as Error).message}`
-            );
-          }
-        })
+        list
+          .filter(
+            (file) =>
+              canUploadImages ||
+              !isSupportedImage({ type: file.type, name: file.name })
+          )
+          .map(async (file) => {
+            try {
+              return await api.uploadFile(file, currentProfile?.target ?? null);
+            } catch (err) {
+              throw new Error(
+                `${file.name} 上传失败：${(err as Error).message}`
+              );
+            }
+          })
       );
 
       setPendingAttachments((prev) => [...prev, ...uploaded]);
@@ -482,8 +510,9 @@ export default function Chat({
     convId: string,
     history: ChatMessage[]
   ) => {
+    if (!currentProfile) return;
     let acc = "";
-    const handle = api.streamChat(history, model, (delta) => {
+    const handle = api.streamChat(history, currentProfile.target, (delta) => {
       acc += delta;
       setAssistantContent(convId, acc);
     });
@@ -507,8 +536,10 @@ export default function Chat({
     const content = input.trim();
     if (!hydrated || !content || streaming) return;
 
-    if (!deepseekConfigured) {
-      window.alert("尚未配置 DeepSeek API Key，请先在设置中填写");
+    if (!currentProfile?.hasKey) {
+      window.alert(
+        `「${currentProfile?.name ?? "当前模型"}」尚未配置 API Key，请先在设置 → 模型设置中填写`
+      );
       onOpenSettings();
       return;
     }
@@ -691,16 +722,14 @@ export default function Chat({
       : active.title
     : "DeekAI Chat";
 
-  const modelChoices = (() => {
-    const list: Array<{ id: string; label: string }> = MODELS.map((m) => ({
-      id: m.id as string,
-      label: m.label as string,
-    }));
-    if (defaultModel && !list.some((m) => m.id === defaultModel)) {
-      list.unshift({ id: defaultModel, label: `${defaultModel}（默认）` });
-    }
-    return list;
-  })();
+  // 模型选择器：显示自定义条目名，括号里补上厂商实际模型名便于辨认
+  const modelChoices = modelOptions.map((option) => ({
+    id: option.id,
+    label:
+      option.model && option.model !== option.name
+        ? `${option.name}（${option.model}）`
+        : option.name,
+  }));
 
   // 导出当前会话为 PDF：复用已渲染的消息 DOM + 打印专用样式
   const exportConversationPdf = async () => {
@@ -943,11 +972,18 @@ export default function Chat({
           <div className="chat-header-actions">
             <select
               className="model-select"
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              title="选择模型"
+              value={currentProfile?.id ?? ""}
+              onChange={(e) => setSelectedId(e.target.value)}
+              title={
+                currentProfile?.hasKey
+                  ? "选择模型"
+                  : "当前条目未配置 API Key，点击右侧设置填写"
+              }
               disabled={uploading || streaming}
             >
+              {modelChoices.length === 0 ? (
+                <option value="">未配置模型</option>
+              ) : null}
               {modelChoices.map((m) => (
                 <option key={m.id} value={m.id}>
                   {m.label}
@@ -1096,7 +1132,8 @@ export default function Chat({
                       {attachment.name}
                     </span>
                     {attachment.kind === "image" &&
-                    model !== VISION_MODEL_ID ? (
+                    currentProfile?.visionModel &&
+                    currentProfile.model !== currentProfile.visionModel ? (
                       <span className="attachment-hint">将自动切换视觉模型</span>
                     ) : null}
                     <button
@@ -1136,9 +1173,11 @@ export default function Chat({
                   uploadFiles(pastedFiles);
                 }}
                 placeholder={
-                  deepseekConfigured
-                    ? "输入消息… 可直接粘贴图片/文件上传，Enter 发送"
-                    : "尚未配置 DeepSeek API Key，请点击右上角设置填写后开始对话"
+                  currentProfile?.hasKey
+                    ? canUploadImages
+                      ? "输入消息… 可直接粘贴图片/文件上传，Enter 发送"
+                      : "输入消息… 可粘贴文档类附件（PDF/DOCX/TXT），Enter 发送"
+                    : "当前模型条目尚未配置 API Key，请点击右上角设置 →「模型设置」填写"
                 }
                 rows={1}
               />
@@ -1149,13 +1188,21 @@ export default function Chat({
                 multiple
                 className="hidden-file-input"
                 onChange={(e) => uploadFiles(e.target.files)}
-                accept=".txt,.md,.markdown,.csv,.json,.yaml,.yml,.xml,.html,.css,.js,.jsx,.ts,.tsx,.py,.java,.go,.rs,.c,.cpp,.h,.hpp,.sql,.log,.ini,.env,.pdf,.docx,image/jpeg,image/png,image/gif,image/webp"
+                accept={
+                  canUploadImages
+                    ? ".txt,.md,.markdown,.csv,.json,.yaml,.yml,.xml,.html,.css,.js,.jsx,.ts,.tsx,.py,.java,.go,.rs,.c,.cpp,.h,.hpp,.sql,.log,.ini,.env,.pdf,.docx,image/jpeg,image/png,image/gif,image/webp"
+                    : ".txt,.md,.markdown,.csv,.json,.yaml,.yml,.xml,.html,.css,.js,.jsx,.ts,.tsx,.py,.java,.go,.rs,.c,.cpp,.h,.hpp,.sql,.log,.ini,.env,.pdf,.docx"
+                }
               />
 
               <button
                 type="button"
                 className="round-btn attach-round"
-                title="上传文件（或直接粘贴图片/文件到输入框）"
+                title={
+                  canUploadImages
+                    ? "上传文件（或直接粘贴图片/文件到输入框）"
+                    : "上传文档类附件（当前模型条目不支持图片）"
+                }
                 onClick={() => fileInputRef.current?.click()}
                 disabled={streaming || uploading}
               >

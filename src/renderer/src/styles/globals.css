@@ -1384,6 +1384,149 @@ body {
   flex-direction: column;
   gap: 12px;
   overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+/* 设置面板 Tab（用户设置 / 模型设置 / 以后的智能体、MCP、Skill…） */
+.settings-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 8px 22px 0;
+  border-bottom: 1px solid #ececf1;
+  flex-shrink: 0;
+}
+
+.settings-tab {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: #6b7280;
+  cursor: pointer;
+  font-size: 13px;
+  font-family: inherit;
+  padding: 8px 12px;
+  margin-bottom: -1px;
+}
+
+.settings-tab:hover {
+  color: #1f2328;
+}
+
+.settings-tab.active {
+  color: #10a37f;
+  border-bottom-color: #10a37f;
+  font-weight: 600;
+}
+
+/* 模型条目列表 */
+.profile-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.profile-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid #ececf1;
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.profile-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.profile-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1f2328;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profile-meta {
+  font-size: 11.5px;
+  color: #8e8ea0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profile-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.profile-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.profile-actions .share-btn {
+  padding: 5px 7px;
+}
+
+.profile-add {
+  align-self: flex-start;
+}
+
+/* 表单行内的小按钮与链接 */
+.settings-inline-btn {
+  background: transparent;
+  border: 1px solid #d9d9e3;
+  border-radius: 6px;
+  color: #10a37f;
+  cursor: pointer;
+  font-size: 11.5px;
+  font-family: inherit;
+  padding: 2px 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.settings-inline-btn:hover:not(:disabled) {
+  background: #f0faf6;
+}
+
+.settings-inline-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.settings-link {
+  background: transparent;
+  border: none;
+  color: #10a37f;
+  cursor: pointer;
+  font-size: 11px;
+  font-family: inherit;
+  padding: 0 2px;
+  text-decoration: underline;
+  word-break: break-all;
+}
+
+/* 独立于滚动区的操作栏（模型设置 Tab 用） */
+.settings-actions-bar {
+  margin-top: 0;
+  padding: 14px 22px;
+  border-top: 1px solid #ececf1;
+  flex-shrink: 0;
+}
+
+.spin {
+  animation: deekai-spin 0.9s linear infinite;
 }
 
 .settings-group-title {
@@ -1452,6 +1595,119 @@ body {
 .settings-hint.warn {
   color: #8a5b00;
   background: #fff7e0;
+}
+
+/* 模型名选择器：内联展开的可滚动列表
+   （原生 datalist 在桌面端弹层无法滚动、长列表会被裁切，这里改成常规流式布局） */
+.model-picker {
+  display: flex;
+  gap: 6px;
+}
+
+.model-picker input {
+  flex: 1;
+  min-width: 0;
+}
+
+.model-picker-toggle {
+  flex-shrink: 0;
+  width: 38px;
+  border: 1px solid #d9d9e3;
+  border-radius: 8px;
+  background: #fff;
+  color: #6b7280;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.15s ease;
+}
+
+.model-picker-toggle:hover:not(:disabled) {
+  border-color: #10a37f;
+  color: #10a37f;
+}
+
+.model-picker-toggle.open {
+  transform: rotate(180deg);
+}
+
+.model-picker-toggle:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.model-picker-panel {
+  border: 1px solid #d9d9e3;
+  border-radius: 10px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.model-picker-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 10px;
+  font-size: 11px;
+  color: #8e8ea0;
+  background: #fafafa;
+  border-bottom: 1px solid #ececf1;
+}
+
+.model-picker-hint {
+  flex-shrink: 0;
+}
+
+.model-picker-list {
+  max-height: 220px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px;
+}
+
+.model-picker-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.model-picker-list::-webkit-scrollbar-thumb {
+  background: #d9d9e3;
+  border-radius: 999px;
+}
+
+.model-option {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: none;
+  background: transparent;
+  border-radius: 7px;
+  padding: 7px 9px;
+  font-size: 12.5px;
+  font-family: inherit;
+  color: #1f2328;
+  text-align: left;
+  cursor: pointer;
+  word-break: break-all;
+}
+
+.model-option:hover {
+  background: #f0faf6;
+}
+
+.model-option.active {
+  background: #e8f6f0;
+  color: #10a37f;
+  font-weight: 600;
+}
+
+.model-picker-empty {
+  padding: 10px;
+  font-size: 12px;
+  color: #8e8ea0;
 }
 
 .settings-foot-info {
@@ -1733,6 +1989,45 @@ body {
   color: #b3b3bd;
 }
 
+[data-theme="dark"] .model-picker-toggle {
+  background: #2a2b32;
+  border-color: #4d4d4f;
+  color: #b3b3bd;
+}
+
+[data-theme="dark"] .model-picker-toggle:hover:not(:disabled) {
+  border-color: #10a37f;
+  color: #10a37f;
+}
+
+[data-theme="dark"] .model-picker-panel {
+  background: #2a2b32;
+  border-color: #4d4d4f;
+}
+
+[data-theme="dark"] .model-picker-head {
+  background: #23242a;
+  border-bottom-color: #3a3a40;
+  color: #8e8ea0;
+}
+
+[data-theme="dark"] .model-picker-list::-webkit-scrollbar-thumb {
+  background: #4d4d4f;
+}
+
+[data-theme="dark"] .model-option {
+  color: #ececf1;
+}
+
+[data-theme="dark"] .model-option:hover {
+  background: #33343c;
+}
+
+[data-theme="dark"] .model-option.active {
+  background: #1f3b33;
+  color: #10a37f;
+}
+
 [data-theme="dark"] .settings-foot-info {
   background: #2a2b32;
   color: #8e8ea0;
@@ -1744,6 +2039,38 @@ body {
 }
 
 [data-theme="dark"] .settings-cancel:hover {
+  background: #2a2b32;
+}
+
+[data-theme="dark"] .settings-tabs {
+  border-bottom-color: #3f3f46;
+}
+
+[data-theme="dark"] .settings-tab {
+  color: #b3b3bd;
+}
+
+[data-theme="dark"] .settings-tab:hover {
+  color: #ececf1;
+}
+
+[data-theme="dark"] .settings-actions-bar {
+  border-top-color: #3f3f46;
+}
+
+[data-theme="dark"] .profile-item {
+  border-color: #3f3f46;
+}
+
+[data-theme="dark"] .profile-name {
+  color: #ececf1;
+}
+
+[data-theme="dark"] .settings-inline-btn {
+  border-color: #4d4d4f;
+}
+
+[data-theme="dark"] .settings-inline-btn:hover:not(:disabled) {
   background: #2a2b32;
 }
 

@@ -9,7 +9,14 @@ type Mode = "login" | "signup";
  * 登录 / 注册页（复用网页版 UI，验证逻辑直接走 Supabase Auth：
  * 注册若开启邮件验证会提示去邮箱确认，确认后回应用登录即可。）
  */
-export default function Login({ onOpenSettings }: { onOpenSettings: () => void }) {
+export default function Login({
+  onOpenSettings,
+  expiredNotice,
+}: {
+  onOpenSettings: () => void;
+  /** 会话过期后由 App 传入的提示（空闲超时 / 累计上限） */
+  expiredNotice?: string;
+}) {
   const [mode, setMode] = useState<Mode>("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -133,6 +140,9 @@ export default function Login({ onOpenSettings }: { onOpenSettings: () => void }
           />
         </label>
 
+        {expiredNotice && !notice ? (
+          <div className="auth-notice">{expiredNotice}</div>
+        ) : null}
         {error ? <div className="auth-error">{error}</div> : null}
         {notice ? <div className="auth-notice">{notice}</div> : null}
 

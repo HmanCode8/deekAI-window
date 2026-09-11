@@ -68,10 +68,12 @@ npm run dist:win:advanced   # 自托管/开发者版（可改 Supabase 等基础
 | 想找什么 | 去哪个文件 |
 |---|---|
 | UI 全部功能入口 | `src/renderer/src/components/Chat.tsx` |
+| 设置面板（Tab 壳 + 用户设置 / 模型设置） | `src/renderer/src/components/SettingsDialog.tsx`、`components/settings/` |
 | 前端调后端的唯一门面 | `src/renderer/src/lib/api.ts` |
 | 双端接口契约 | `src/shared/bridge-api.ts` |
+| 模型条目与厂商预设 | `src/shared/model-profiles.ts` |
 | 桌面端 IPC 实现 | `src/main/ipc.ts` + `src/preload/index.ts` |
 | 网页端 HTTP 契约 | `src/server/router.ts` |
-| 模型调用 / 文件解析 | `src/backend/deepseek.ts`、`src/backend/uploads.ts` |
+| 模型调用 / 模型列表 / 文件解析 | `src/backend/deepseek.ts`、`src/backend/models.ts`、`src/backend/uploads.ts` |
 | 配置分层与版本判定 | `src/shared/config-core.ts` |
 | 数据库迁移 | `supabase/migrations/` |

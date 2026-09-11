@@ -6,6 +6,7 @@ import {
   type BaseConfigFile,
   type ConfigKey,
 } from "@shared/config-core";
+import type { ResolvedModel } from "@shared/model-profiles";
 import type { PublicConfig, WritableConfig } from "@shared/bridge-api";
 
 /**
@@ -58,6 +59,11 @@ class DesktopConfigManager {
 
   get(key: ConfigKey): string | null {
     return this.core.get(key);
+  }
+
+  /** 按条目 id 解析出一次模型调用所需的运行时信息（含密钥） */
+  resolveModel(profileId?: string | null): ResolvedModel {
+    return this.core.resolveModel(profileId);
   }
 
   save(values: WritableConfig): void {

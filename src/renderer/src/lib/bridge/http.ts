@@ -4,14 +4,16 @@ import {
   type DeekaiBridge,
 } from "@shared/bridge-api";
 import type { ChatStartPayload, PublicConfig, WritableConfig } from "@shared/bridge-api";
+import { getSupabase } from "../supabase";
 
 /**
  * 网页端适配器：把「能力后端」的 HTTP 契约实现成与桌面端 IPC 相同的接口。
  * 契约（见 src/server/router.ts，将来可由 Java 后端实现同一套）：
  *   GET  /api/config        -> PublicConfig
  *   PUT  /api/config        -> { ok: true }
- *   POST /api/chat          -> text/event-stream，data 为 ChatStreamEvent JSON
- *   POST /api/upload        -> UploadedAttachment（multipart，字段名 file）
+ *   POST /api/chat          -> text/event-stream，data 为 ChatStreamEvent JSON（需 Bearer token）
+ *   POST /api/upload        -> UploadedAttachment（multipart，字段名 file + target；需 Bearer token）
+ *   POST /api/models        -> { models, error? }
  *   POST /api/auth/adopt    -> { adopted: boolean }
  */
 
@@ -20,6 +22,20 @@ let chatListener: ((event: ChatStreamEvent) => void) | null = null;
 
 function emit(event: ChatStreamEvent): void {
   chatListener?.(event);
+}
+
+/**
+ * 附带当前登录用户的 access token（需要鉴权的端点用）。
+ * 未初始化 Supabase 或未登录时返回空对象——服务端会据此返回 401。
+ */
+async function authHeader(): Promise<Record<string, string>> {
+  try {
+    const { data } = await getSupabase().auth.getSession();
+    const token = data.session?.access_token;
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  } catch {
+    return {};
+  }
 }
 
 async function readError(response: Response, fallback: string): Promise<Error> {
@@ -37,7 +53,7 @@ async function chatStart(payload: ChatStartPayload): Promise<void> {
   try {
     response = await fetch("/api/chat", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...(await authHeader()) },
       body: JSON.stringify(payload),
       signal: controller.signal,
     });
@@ -130,11 +146,27 @@ export const httpBridge: DeekaiBridge = {
         type: input.type || "application/octet-stream",
       })
     );
+    if (input.target) formData.append("target", JSON.stringify(input.target));
+
     const response = await fetch("/api/upload", {
       method: "POST",
+      headers: await authHeader(),
       body: formData,
     });
     if (!response.ok) throw await readError(response, "上传失败");
+    return response.json();
+  },
+
+  async listModels(input) {
+    const response = await fetch("/api/models", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    });
+    if (!response.ok) {
+      const error = await readError(response, "获取模型列表失败");
+      return { models: [], error: error.message };
+    }
     return response.json();
   },
 
