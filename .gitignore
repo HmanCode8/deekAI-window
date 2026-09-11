@@ -2,8 +2,14 @@ node_modules/
 out/
 dist/
 release/
+release-advanced/
 .electron-cache/
+.electron-builder-cache/
 .dev-profile/
+server-data/
+build/app-config.json
+app-config.json
+app-config.advanced.json
 *.log
 .env
 .env.local

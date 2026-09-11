@@ -1,0 +1,39 @@
+# 自托管 / 开发者版（advanced）打包配置：
+# 与 release 版共用同一套源码，区别是发行内置配置里 DEEKAI_EDITION=advanced，
+# 因此设置面板保留完整的基础设施配置（Supabase / 存储模式 / 分享站点等）。
+appId: com.deekai.desktop.advanced
+productName: DeekAI Advanced
+directories:
+  buildResources: build
+  output: release-advanced
+electronDist: node_modules/electron/dist
+extraResources:
+  - from: build/app-config.json
+    to: app-config.json
+files:
+  - out/**
+  - package.json
+  - "!src/**"
+  - "!out/web/**"
+  - "!out/server/**"
+  - "!out/**/*.map"
+asar: true
+compression: normal
+win:
+  icon: build/icon.ico
+  target:
+    - target: nsis
+      arch:
+        - x64
+    - target: portable
+      arch:
+        - x64
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+  shortcutName: DeekAI Advanced
+  artifactName: DeekAI-Advanced-Setup-${version}.${ext}
+portable:
+  artifactName: DeekAI-Advanced-Portable-${version}.${ext}

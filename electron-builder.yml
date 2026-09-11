@@ -3,22 +3,36 @@ productName: DeekAI
 directories:
   buildResources: build
   output: release
+# 直接用已下载到 node_modules 的 Electron 发行版，避免打包时重复下载
+electronDist: node_modules/electron/dist
 files:
   - out/**
   - package.json
   - "!src/**"
+  - "!out/web/**"
+  - "!out/server/**"
   - "!out/**/*.map"
+# 发行内置配置：由 scripts/prepare-release-config.mjs 生成后随包下发
+extraResources:
+  - from: build/app-config.json
+    to: app-config.json
 asar: true
 compression: normal
 win:
+  icon: build/icon.ico
   target:
     - target: nsis
       arch:
         - x64
-  artifactName: DeekAI-Setup-${version}.${ext}
+    - target: portable
+      arch:
+        - x64
 nsis:
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: always
   shortcutName: DeekAI
+  artifactName: DeekAI-Setup-${version}.${ext}
+portable:
+  artifactName: DeekAI-Portable-${version}.${ext}

@@ -1,18 +1,23 @@
 import { useEffect, useRef, useState, type DragEvent } from "react";
 import Markdown from "./Markdown";
+import ShareDialog from "./ShareDialog";
 import {
   ArrowUp,
   Bot,
   ChevronDown,
   ChevronRight,
   Database,
+  FileDown,
   FolderPlus,
+  Menu,
   MessageSquare,
+  Monitor,
   Paperclip,
   Pencil,
   Plus,
   RotateCcw,
   Settings,
+  Share2,
   Sparkles,
   Trash2,
   User,
@@ -20,19 +25,31 @@ import {
 import type { ChatMessage, UploadedAttachment } from "@shared/attachments";
 import { MODELS, VISION_MODEL_ID } from "@shared/attachments";
 import type { Conversation, Project } from "@shared/chat-types";
+import type { DesktopDeeplink } from "@shared/bridge-api";
+import {
+  buildConversationHtml,
+  buildMessagesHtml,
+  exportFileName,
+} from "../lib/export-pdf";
+import { useAvatar } from "../lib/profile";
 import * as api from "../lib/api";
 
 const UNGROUPED_KEY = "__ungrouped__";
 
+const SIDEBAR_KEY = "deekai:sidebar:collapsed";
+
 export interface ChatProps {
-  /** supabase 模式下为登录用户；memory 模式下为 null */
-  user: { id: string; email: string } | null;
+  /** 当前登录用户 id（用于读取本机头像）；内存模式为 null */
+  userId: string | null;
   store: "memory" | "supabase";
   deepseekConfigured: boolean;
-  onLogout: () => void;
+  /** 默认模型（来自设置；不在内置清单中时会追加到选择器） */
+  defaultModel: string | null;
   onOpenSettings: () => void;
   /** 仅 memory 模式下可退出回到引导页 */
   onExitMemory?: () => void;
+  /** 分享站点地址（拼分享链接用；桌面端需配置后链接才完整） */
+  publicWebUrl: string | null;
 }
 
 /**
@@ -40,19 +57,20 @@ export interface ChatProps {
  * 数据读写、上传、对话全部经由 lib/api 透明封装，UI 逻辑与网页版一致。
  */
 export default function Chat({
-  user,
+  userId,
   store,
   deepseekConfigured,
-  onLogout,
+  defaultModel,
   onOpenSettings,
   onExitMemory,
+  publicWebUrl,
 }: ChatProps) {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
-  const [model, setModel] = useState<string>(MODELS[0].id);
+  const [model, setModel] = useState<string>(defaultModel ?? MODELS[0].id);
   const [pendingAttachments, setPendingAttachments] = useState<
     UploadedAttachment[]
   >([]);
@@ -71,6 +89,28 @@ export default function Chat({
   >(null);
   const [conversationRenameValue, setConversationRenameValue] = useState("");
   const [dragOverKey, setDragOverKey] = useState<string | null>(null);
+  const [desktopHint, setDesktopHint] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem(SIDEBAR_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const userAvatar = useAvatar(userId);
+
+  const toggleSidebar = () => {
+    setSidebarCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(SIDEBAR_KEY, next ? "1" : "0");
+      } catch {
+        // 忽略写入失败
+      }
+      return next;
+    });
+  };
 
   const abortRef = useRef<{ abort(): void } | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -79,6 +119,7 @@ export default function Chat({
   const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const skipPersistRef = useRef(true);
   const draggingConvRef = useRef(false);
+  const conversationsRef = useRef<Conversation[]>([]);
 
   const active = conversations.find((c) => c.id === activeId) ?? null;
   const activeProject = active
@@ -165,6 +206,36 @@ export default function Chat({
       el.scrollTo({ top: el.scrollHeight });
     }
   }, [active?.messages]);
+
+  useEffect(() => {
+    conversationsRef.current = conversations;
+  }, [conversations]);
+
+  // 桌面端：处理自定义协议唤起（deekai://open?conversation=..&draft=..）
+  // 携带的会话需已同步到本地才切换；草稿直接写入输入框
+  useEffect(() => {
+    if (!hydrated) return;
+
+    const apply = (link: DesktopDeeplink | null) => {
+      if (!link) return;
+      const target = link.conversationId;
+      if (target && conversationsRef.current.some((c) => c.id === target)) {
+        setActiveId(target);
+        followRef.current = true;
+      }
+      if (link.draft) {
+        setInput(link.draft);
+      }
+    };
+
+    const unsubscribe = api.onDeeplink(apply);
+    // 启动时缓存的协议参数（消费一次）
+    api
+      .getPendingDeeplink()
+      .then(apply)
+      .catch(() => {});
+    return unsubscribe;
+  }, [hydrated]);
 
   const conversationsOfProject = (projectId: string | null) =>
     conversations.filter((c) => c.projectId === projectId);
@@ -620,8 +691,40 @@ export default function Chat({
       : active.title
     : "DeekAI Chat";
 
+  const modelChoices = (() => {
+    const list: Array<{ id: string; label: string }> = MODELS.map((m) => ({
+      id: m.id as string,
+      label: m.label as string,
+    }));
+    if (defaultModel && !list.some((m) => m.id === defaultModel)) {
+      list.unshift({ id: defaultModel, label: `${defaultModel}（默认）` });
+    }
+    return list;
+  })();
+
+  // 导出当前会话为 PDF：复用已渲染的消息 DOM + 打印专用样式
+  const exportConversationPdf = async () => {
+    const listEl = scrollRef.current;
+    if (!active || !listEl || active.messages.length === 0) {
+      window.alert("当前会话还没有可导出的内容");
+      return;
+    }
+
+    const html = buildConversationHtml({
+      title: activeProject ? `${activeProject.name} / ${active.title}` : active.title,
+      subtitle: `导出时间：${new Date().toLocaleString()} · 共 ${active.messages.length} 条消息`,
+      messagesHtml: buildMessagesHtml(listEl),
+    });
+
+    try {
+      await api.exportPdf({ html, fileName: exportFileName(active.title) });
+    } catch (err) {
+      window.alert(`导出失败：${(err as Error).message}`);
+    }
+  };
+
   return (
-    <div className="app">
+    <div className={`app${sidebarCollapsed ? " sidebar-collapsed" : ""}`}>
       <aside className="sidebar">
         <button className="new-chat" onClick={() => newChat(null)}>
           <Plus size={16} strokeWidth={2.2} />
@@ -793,24 +896,14 @@ export default function Chat({
         </nav>
 
         <div className="sidebar-user">
-          <span className="sidebar-user-email" title={user?.email ?? "内存模式"}>
-            {user?.email ?? "本地 · 内存模式"}
-          </span>
-          <div className="sidebar-user-actions">
-            <button
-              className="sidebar-text-btn"
-              onClick={onOpenSettings}
-              title="应用设置"
-            >
-              <Settings size={14} />
-              设置
-            </button>
-            {user ? (
-              <button className="sidebar-logout" onClick={onLogout} title="退出登录">
-                退出
-              </button>
-            ) : null}
-          </div>
+          <button
+            className="sidebar-settings-btn"
+            onClick={onOpenSettings}
+            title="设置（账号 / 外观 / 数据存储 / 模型 / 分享）"
+          >
+            <Settings size={15} />
+            设置
+          </button>
         </div>
         <div className="sidebar-footer">
           Powered by DeepSeek
@@ -837,7 +930,16 @@ export default function Chat({
         ) : null}
 
         <header className="chat-header">
-          <h1 title={headerTitle}>{headerTitle}</h1>
+          <div className="chat-header-left">
+            <button
+              className="icon-btn header-toggle"
+              onClick={toggleSidebar}
+              title={sidebarCollapsed ? "展开会话列表" : "收起会话列表"}
+            >
+              <Menu size={17} />
+            </button>
+            <h1 title={headerTitle}>{headerTitle}</h1>
+          </div>
           <div className="chat-header-actions">
             <select
               className="model-select"
@@ -846,7 +948,7 @@ export default function Chat({
               title="选择模型"
               disabled={uploading || streaming}
             >
-              {MODELS.map((m) => (
+              {modelChoices.map((m) => (
                 <option key={m.id} value={m.id}>
                   {m.label}
                 </option>
@@ -854,13 +956,54 @@ export default function Chat({
             </select>
             <button
               className="icon-btn header-settings"
-              title="应用设置"
-              onClick={onOpenSettings}
+              title={memoryMode ? "分享需要云存储（Supabase）模式" : "分享当前会话"}
+              onClick={() => {
+                if (memoryMode) {
+                  window.alert("分享需要云存储（Supabase）模式，请在设置中配置后使用");
+                  return;
+                }
+                if (!active) {
+                  window.alert("请先选择一个会话");
+                  return;
+                }
+                setShareOpen(true);
+              }}
             >
-              <Settings size={17} />
+              <Share2 size={17} />
             </button>
+            <button
+              className="icon-btn header-settings"
+              title="导出当前会话为 PDF"
+              onClick={exportConversationPdf}
+            >
+              <FileDown size={17} />
+            </button>
+            {api.bridgeKind === "web" ? (
+              <button
+                className="header-desktop-btn"
+                onClick={() => {
+                  api.openDesktop({
+                    conversationId: activeId,
+                    draft: input,
+                  });
+                  setDesktopHint(true);
+                  window.setTimeout(() => setDesktopHint(false), 6000);
+                }}
+                title="在已安装的桌面端打开，并携带当前会话与输入草稿"
+              >
+                <Monitor size={15} />
+                桌面端
+              </button>
+            ) : null}
           </div>
         </header>
+
+        {desktopHint ? (
+          <div className="main-hint">
+            <Monitor size={14} />
+            已尝试唤起桌面端；若未安装，请先运行 DeekAI 安装包（浏览器首次会询问是否允许打开）。
+          </div>
+        ) : null}
 
         <div className="message-list" ref={scrollRef} onScroll={handleMessageListScroll}>
           {!active || active.messages.length === 0 ? (
@@ -876,7 +1019,11 @@ export default function Chat({
               <div key={i} className={`message ${m.role}`}>
                 <div className="avatar">
                   {m.role === "user" ? (
-                    <User size={15} />
+                    userAvatar ? (
+                      <img className="avatar-image" src={userAvatar} alt="用户头像" />
+                    ) : (
+                      <User size={15} />
+                    )
                   ) : (
                     <Bot size={15} />
                   )}
@@ -1041,6 +1188,14 @@ export default function Chat({
           </div>
         </div>
       </main>
+
+      <ShareDialog
+        open={shareOpen}
+        conversation={active}
+        projectName={activeProject?.name ?? null}
+        publicWebUrl={publicWebUrl}
+        onClose={() => setShareOpen(false)}
+      />
     </div>
   );
 }

@@ -1,17 +1,44 @@
-import { BrowserWindow, clipboard, ipcMain, shell } from "electron";
-import type { ChatStartPayload, ChatStreamEvent } from "@shared/bridge-api";
+import {
+  app,
+  BrowserWindow,
+  clipboard,
+  dialog,
+  ipcMain,
+  shell,
+} from "electron";
+import fs from "node:fs/promises";
+import path from "node:path";
+import type {
+  ChatStartPayload,
+  ChatStreamEvent,
+  DesktopDeeplink,
+  ExportPdfInput,
+} from "@shared/bridge-api";
 import { configManager } from "./config";
-import { streamChat } from "./deepseek";
-import { handleUpload } from "./uploads";
-import { adoptOrphanRows } from "./supabase-admin";
+import { streamChat } from "../backend/deepseek";
+import { handleUpload } from "../backend/uploads";
+import { adoptOrphanRows } from "../backend/supabase-admin";
 
 /**
  * 注册全部 IPC 通道。
- * 原则：DeepSeek API Key 与 Supabase service role 只在主进程内使用；
+ * 原则：DeepSeek API Key 与 Supabase service role 只在后端内使用；
  * 渲染进程仅持有公开配置（anon key 等同网页端公开值）。
  */
 
 const activeStreams = new Map<string, AbortController>();
+
+/** 启动/唤起时产生的协议参数，等待渲染进程消费（消费即清空，避免刷新后重复套用） */
+let pendingDeeplink: DesktopDeeplink | null = null;
+
+/** 广播协议唤起事件：窗口未就绪时先缓存 */
+export function emitDeeplink(link: DesktopDeeplink): void {
+  pendingDeeplink = link;
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) {
+      win.webContents.send("deekai:deeplink", link);
+    }
+  }
+}
 
 function sendToWindow(win: BrowserWindow, event: ChatStreamEvent) {
   if (!win.isDestroyed()) {
@@ -39,7 +66,7 @@ export function registerIpcHandlers(): void {
       sendToWindow(win, {
         id: payload.id,
         type: "error",
-        message: "未配置 DEEPSEEK_API_KEY，请先在设置中填写",
+        message: "未配置模型 API Key，请在设置中填写",
       });
       return;
     }
@@ -48,6 +75,7 @@ export function registerIpcHandlers(): void {
     activeStreams.set(payload.id, controller);
 
     const fallbackModel = configManager.get("DEEPSEEK_MODEL");
+    const baseUrl = configManager.get("DEEPSEEK_BASE_URL");
 
     try {
       await streamChat(
@@ -56,6 +84,7 @@ export function registerIpcHandlers(): void {
           messages: payload.messages,
           model: typeof payload.model === "string" ? payload.model : undefined,
           apiKey,
+          baseUrl,
           fallbackModel,
           signal: controller.signal,
         },
@@ -89,10 +118,10 @@ export function registerIpcHandlers(): void {
     ) {
       throw new Error("缺少上传文件内容");
     }
-    return handleUpload(
-      input as Parameters<typeof handleUpload>[0],
-      configManager.get("DEEPSEEK_API_KEY")
-    );
+    return handleUpload(input as Parameters<typeof handleUpload>[0], {
+      apiKey: configManager.get("DEEPSEEK_API_KEY"),
+      baseUrl: configManager.get("DEEPSEEK_BASE_URL"),
+    });
   });
 
   ipcMain.handle("supabase:adopt", (_event, args: unknown) => {
@@ -111,9 +140,68 @@ export function registerIpcHandlers(): void {
     clipboard.writeText(typeof text === "string" ? text : "");
   });
 
+  // 渲染进程挂载后消费启动时的协议参数（消费即清空）
+  ipcMain.handle("deeplink:consume", () => {
+    const link = pendingDeeplink;
+    pendingDeeplink = null;
+    return link;
+  });
+
   ipcMain.on("shell:open", (_event, url: unknown) => {
     if (typeof url === "string" && /^https?:\/\//i.test(url)) {
       shell.openExternal(url).catch(() => {});
+    }
+  });
+
+  // 桌面端自身被“唤起”时聚焦窗口
+  ipcMain.on("window:focus", (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (win && !win.isDestroyed()) {
+      if (win.isMinimized()) win.restore();
+      win.show();
+      win.focus();
+    }
+  });
+
+  // 导出 PDF：保存对话框 -> 隐藏窗口渲染 HTML -> printToPDF 落盘
+  ipcMain.handle("export:pdf", async (event, input: ExportPdfInput) => {
+    const owner = BrowserWindow.fromWebContents(event.sender);
+    const options = {
+      title: "导出会话为 PDF",
+      defaultPath: input.fileName,
+      filters: [{ name: "PDF 文档", extensions: ["pdf"] }],
+    };
+    const result = owner
+      ? await dialog.showSaveDialog(owner, options)
+      : await dialog.showSaveDialog(options);
+
+    if (result.canceled || !result.filePath) {
+      return { saved: false };
+    }
+
+    const tempHtml = path.join(
+      app.getPath("temp"),
+      `deekai-export-${Date.now()}.html`
+    );
+
+    await fs.writeFile(tempHtml, input.html, "utf-8");
+
+    const hidden = new BrowserWindow({
+      show: false,
+      webPreferences: { sandbox: true, contextIsolation: true },
+    });
+
+    try {
+      await hidden.loadFile(tempHtml);
+      const pdf = await hidden.webContents.printToPDF({
+        printBackground: true,
+        pageSize: "A4",
+      });
+      await fs.writeFile(result.filePath, pdf);
+      return { saved: true, path: result.filePath };
+    } finally {
+      hidden.destroy();
+      fs.unlink(tempHtml).catch(() => {});
     }
   });
 }

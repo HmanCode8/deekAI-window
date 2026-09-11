@@ -29,8 +29,17 @@ export interface StreamChatParams {
   messages: ChatMessage[];
   model?: string;
   apiKey: string;
+  /** 模型服务 Base URL（OpenAI 兼容），默认 DeepSeek 官方 */
+  baseUrl?: string | null;
   fallbackModel?: string | null;
   signal?: AbortSignal;
+}
+
+export const DEFAULT_MODEL_BASE_URL = "https://api.deepseek.com";
+
+export function resolveChatCompletionsUrl(baseUrl?: string | null): string {
+  const base = (baseUrl?.trim() || DEFAULT_MODEL_BASE_URL).replace(/\/+$/, "");
+  return `${base}/chat/completions`;
 }
 
 function buildDocumentContext(attachments: UploadedAttachment[] = []) {
@@ -132,7 +141,7 @@ export async function streamChat(
 
   let response: Response;
   try {
-    response = await fetch("https://api.deepseek.com/chat/completions", {
+    response = await fetch(resolveChatCompletionsUrl(params.baseUrl), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

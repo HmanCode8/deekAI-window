@@ -10,12 +10,25 @@ import {
 import type { UploadInput } from "@shared/bridge-api";
 
 /**
- * 文件处理（主进程）：图片 -> DeepSeek Files API；文档 -> 本地解析为文本。
- * 逻辑与网页版 app/api/upload/route.ts 保持一致。
+ * 文件处理（主进程/服务端）：图片 -> 模型服务的 Files API；文档 -> 本地解析为文本。
+ * 逻辑与网页版 app/api/upload/route.ts 保持一致，额外支持自定义 Base URL。
  */
 
 const MAX_FILE_SIZE = 64 * 1024 * 1024;
 const MAX_EXTRACTED_CHARS = 12000;
+const DEFAULT_BASE_URL = "https://api.deepseek.com";
+
+export interface UploadOptions {
+  apiKey: string | null;
+  /** 模型服务 Base URL（目前仅 DeepSeek 官方提供 Files API） */
+  baseUrl?: string | null;
+}
+
+/** 目前仅 DeepSeek 官方地址支持「上传文件后引用」的 Files API */
+export function supportsFileUpload(baseUrl?: string | null): boolean {
+  const base = (baseUrl?.trim() || DEFAULT_BASE_URL).toLowerCase();
+  return base.includes("api.deepseek.com");
+}
 
 function normalizeWhitespace(text: string) {
   return text.replace(/\r\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
@@ -63,14 +76,17 @@ async function uploadImageToDeepSeek(
   name: string,
   type: string,
   buffer: Buffer,
-  apiKey: string
+  apiKey: string,
+  baseUrl?: string | null
 ) {
   const formData = new FormData();
   const blob = new Blob([buffer], { type: type || "application/octet-stream" });
   formData.append("purpose", "user_data");
   formData.append("file", blob, name);
 
-  const response = await fetch("https://api.deepseek.com/files", {
+  const base = (baseUrl?.trim() || DEFAULT_BASE_URL).replace(/\/+$/, "");
+
+  const response = await fetch(`${base}/files`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -95,10 +111,12 @@ async function uploadImageToDeepSeek(
 
 export async function handleUpload(
   input: UploadInput,
-  apiKey: string | null
+  options: UploadOptions
 ): Promise<UploadedAttachment> {
+  const { apiKey, baseUrl } = options;
+
   if (!apiKey) {
-    throw new Error("未配置 DEEPSEEK_API_KEY，请先在设置中填写");
+    throw new Error("未配置模型 API Key，请在设置中填写");
   }
 
   if (!input?.name) {
@@ -116,11 +134,18 @@ export async function handleUpload(
   const meta = { type: mimeType, name: input.name };
 
   if (isSupportedImage(meta)) {
+    if (!supportsFileUpload(baseUrl)) {
+      throw new Error(
+        "当前模型服务不支持图片上传（缺少 Files API），请改用文档类附件，或在设置里把 Base URL 换回 DeepSeek 官方地址"
+      );
+    }
+
     const fileId = await uploadImageToDeepSeek(
       input.name,
       mimeType,
       buffer,
-      apiKey
+      apiKey,
+      baseUrl
     );
     return {
       id: crypto.randomUUID(),

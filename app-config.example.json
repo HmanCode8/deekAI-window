@@ -1,0 +1,17 @@
+{
+  "_说明": "发行内置配置示例：复制为 app-config.json 填写后打包。这里的键属于「运营方配置」，release 版用户看不到也改不了（模型键除外）。",
+  "_版本": "release = 面向普通用户；advanced = 自托管/开发者版（保留完整设置面板）",
+  "DEEKAI_EDITION": "release",
+
+  "DATA_STORE": "supabase",
+  "SUPABASE_URL": "https://your-project.supabase.co",
+  "SUPABASE_ANON_KEY": "your-anon-key",
+  "SUPABASE_SERVICE_ROLE_KEY": "仅网页后端需要（老数据认领），桌面端不要填",
+
+  "PUBLIC_WEB_URL": "https://your-site.com",
+
+  "_模型说明": "以下为可选默认值：不填则用户需在「我的模型」里自带 Base URL + Key（BYOK）",
+  "DEEPSEEK_BASE_URL": "https://api.deepseek.com",
+  "DEEPSEEK_MODEL": "deepseek-chat",
+  "DEEPSEEK_API_KEY": "如需服务方统一出 Key（用户无需自带）可填在此处"
+}

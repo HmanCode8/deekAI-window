@@ -3,6 +3,7 @@ import type { PublicConfig } from "@shared/bridge-api";
 import Chat from "./components/Chat";
 import SettingsDialog from "./components/SettingsDialog";
 import * as api from "./lib/api";
+import { useTheme } from "./lib/theme";
 import {
   getSupabase,
   initSupabase,
@@ -11,6 +12,13 @@ import {
 } from "./lib/supabase";
 import Login from "./pages/Login";
 import Onboarding from "./pages/Onboarding";
+import SharedView from "./components/SharedView";
+
+/** 分享链接路由：#/share/<token>（桌面端 file:// 与网页端都可直接打开） */
+function readShareToken(): string | null {
+  const match = window.location.hash.match(/^#\/share\/([A-Za-z0-9_-]{8,})/);
+  return match ? match[1] : null;
+}
 
 /**
  * App 门控（对应网页版 middleware.ts 的登录态路由保护）：
@@ -24,6 +32,18 @@ export default function App() {
   const [memoryMode, setMemoryMode] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [adopted, setAdopted] = useState<Set<string>>(new Set());
+  const { mode: themeMode, setMode: setThemeMode } = useTheme();
+  const [shareToken, setShareToken] = useState<string | null>(() =>
+    readShareToken()
+  );
+  const [supabaseInited, setSupabaseInited] = useState(false);
+
+  // 分享链接路由（hash 变化时重新判断）
+  useEffect(() => {
+    const onHashChange = () => setShareToken(readShareToken());
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -51,6 +71,7 @@ export default function App() {
       return;
     }
     const client = initSupabase(config.supabaseUrl, config.supabaseAnonKey);
+    setSupabaseInited(true);
     let mounted = true;
 
     client.auth.getSession().then(({ data }) => {
@@ -99,21 +120,38 @@ export default function App() {
   const closeSettings = () => setSettingsOpen(false);
 
   let view: ReactNode;
-  if (!config) {
-    view = (
-      <div className="boot-screen">
-        <span className="spinner boot-spinner" />
-        <div>DeekAI 正在启动…</div>
+  const bootScreen = (
+    <div className="boot-screen">
+      <span className="spinner boot-spinner" />
+      <div>DeekAI 正在启动…</div>
+    </div>
+  );
+
+  if (shareToken) {
+    // 只读分享页：无需登录，只要配置了 Supabase 即可匿名读取
+    view = !config ? (
+      bootScreen
+    ) : !config.supabaseConfigured ? (
+      <div className="share-page">
+        <div className="share-empty">
+          <h2>分享需要云存储配置</h2>
+          <p>请先配置 Supabase（SUPABASE_URL / SUPABASE_ANON_KEY）后再打开分享链接。</p>
+        </div>
       </div>
+    ) : (
+      <SharedView token={shareToken} ready={supabaseInited} />
     );
+  } else if (!config) {
+    view = bootScreen;
   } else if (config.supabaseConfigured) {
     view = user ? (
       <Chat
-        user={user}
+        userId={user.id}
         store="supabase"
         deepseekConfigured={config.deepseekConfigured}
-        onLogout={logout}
+        defaultModel={config.model}
         onOpenSettings={openSettings}
+        publicWebUrl={config.publicWebUrl}
       />
     ) : (
       <Login onOpenSettings={openSettings} />
@@ -128,12 +166,13 @@ export default function App() {
   } else {
     view = (
       <Chat
-        user={null}
+        userId={null}
         store="memory"
         deepseekConfigured={config.deepseekConfigured}
-        onLogout={logout}
+        defaultModel={config.model}
         onOpenSettings={openSettings}
         onExitMemory={() => setMemoryMode(false)}
+        publicWebUrl={config.publicWebUrl}
       />
     );
   }
@@ -144,6 +183,12 @@ export default function App() {
       <SettingsDialog
         open={settingsOpen}
         config={config}
+        themeMode={themeMode}
+        onThemeChange={setThemeMode}
+        user={user}
+        bridgeKind={api.bridgeKind}
+        store={config?.store ?? "memory"}
+        onLogout={logout}
         onClose={closeSettings}
         onSaved={() => {
           closeSettings();
