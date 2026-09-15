@@ -11,6 +11,12 @@ build/app-config.json
 app-config.json
 app-config.advanced.json
 *.log
+*.tgz
 .env
 .env.local
+.env.production
+
+# 证书与 ACME 校验目录（只在服务器上生成，含私钥，绝不能提交）
+deploy/certbot/
+
 .DS_Store

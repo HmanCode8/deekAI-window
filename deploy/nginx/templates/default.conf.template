@@ -1,0 +1,66 @@
+# Nginx 站点配置（模板）
+# 由 nginx 官方镜像的入口脚本用 envsubst 处理：${SITE_ADDRESS} 取自 compose 的
+# environment（值来自 .env 的 SITE_ADDRESS），其余 $host / $uri 等 nginx 变量不受影响。
+
+# ---------- HTTP：只做两件事（放行证书校验、其余跳 HTTPS）----------
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${SITE_ADDRESS};
+
+    # certbot webroot 模式续期时的校验目录
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+# ---------- HTTPS：托管前端静态文件 + 反代 /api ----------
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name ${SITE_ADDRESS};
+
+    ssl_certificate     /etc/letsencrypt/live/${SITE_ADDRESS}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${SITE_ADDRESS}/privkey.pem;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_session_cache   shared:SSL:10m;
+
+    # 上传单个文件上限（后端 multer 限制 64MB，这里留点余量）
+    client_max_body_size 70m;
+
+    # 前端：本机 npm run build:web 的产物，挂载在 /usr/share/nginx/html
+    root  /usr/share/nginx/html;
+    index index.html;
+
+    location / {
+        try_files $uri /index.html;
+    }
+
+    # 带内容 hash 的静态资源可以长缓存
+    location /assets/ {
+        expires 30d;
+        add_header Cache-Control "public, immutable";
+    }
+
+    # 后端能力服务
+    location /api/ {
+        proxy_pass http://deekai-api:8787;
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # 对话接口是 text/event-stream（SSE）：必须关闭缓冲，
+        # 否则前端要等整段回复结束才一次性显示，丢掉流式效果
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+}

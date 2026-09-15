@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type DragEvent } from "react";
 import Markdown from "./Markdown";
 import ShareDialog from "./ShareDialog";
 import {
+  AlertTriangle,
   ArrowUp,
   Bot,
   ChevronDown,
@@ -24,7 +25,7 @@ import {
 } from "lucide-react";
 import type { ChatMessage, UploadedAttachment } from "@shared/attachments";
 import { isSupportedImage } from "@shared/attachments";
-import type { Conversation, Project } from "@shared/chat-types";
+import type { ChatState, Conversation, Project } from "@shared/chat-types";
 import type { DesktopDeeplink, PublicModelProfile } from "@shared/bridge-api";
 import {
   buildConversationHtml,
@@ -33,6 +34,7 @@ import {
 } from "../lib/export-pdf";
 import { useAvatar } from "../lib/profile";
 import { useModelOptions } from "../lib/model-profiles";
+import type { ChatConflict } from "../lib/persistence";
 import * as api from "../lib/api";
 
 const UNGROUPED_KEY = "__ungrouped__";
@@ -88,6 +90,10 @@ export default function Chat({
   const [conversationRenameValue, setConversationRenameValue] = useState("");
   const [dragOverKey, setDragOverKey] = useState<string | null>(null);
   const [desktopHint, setDesktopHint] = useState(false);
+  /** 待用户裁决的消息冲突（多端同时改同一会话） */
+  const [conflicts, setConflicts] = useState<ChatConflict[]>([]);
+  /** 已自动合并另一端消息的轻提示 */
+  const [mergedHint, setMergedHint] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     try {
@@ -127,6 +133,10 @@ export default function Chat({
   const skipPersistRef = useRef(true);
   const draggingConvRef = useRef(false);
   const conversationsRef = useRef<Conversation[]>([]);
+  /** 协议唤起指定的会话若尚未同步到本地，先记下，等数据刷新后再切 */
+  const pendingActiveIdRef = useRef<string | null>(null);
+  /** 多端同步拉取是否进行中（避免焦点/可见性事件重复发请求） */
+  const reloadingRef = useRef(false);
 
   const active = conversations.find((c) => c.id === activeId) ?? null;
   const activeProject = active
@@ -134,6 +144,8 @@ export default function Chat({
     : null;
 
   const memoryMode = store === "memory";
+  /** 当前需要用户处理的冲突（一次只提示一个） */
+  const conflict = conflicts[0] ?? null;
 
   // 点击空白处关闭“移动分组”菜单
   useEffect(() => {
@@ -141,6 +153,72 @@ export default function Chat({
     window.addEventListener("click", closeMenu);
     return () => window.removeEventListener("click", closeMenu);
   }, []);
+
+  /** 把云端数据整体应用到界面；keepActive 为真时尽量保留当前会话 */
+  const applyRemoteState = (data: ChatState, keepActive: boolean) => {
+    // 数据刚来自云端，与云端一致，无需再回写一次
+    skipPersistRef.current = true;
+    setProjects(data.projects);
+    setConversations(data.conversations);
+    setActiveId((prev) =>
+      keepActive && prev && data.conversations.some((c) => c.id === prev)
+        ? prev
+        : (data.conversations[0]?.id ?? null)
+    );
+  };
+
+  /**
+   * 多端同步：重新拉取云端会话数据（在网页端/另一台设备改动后，切回本窗口即可看到）。
+   * 流式输出、上传中，或本地尚有未落库的改动时跳过，避免两端互相覆盖。
+   */
+  const reloadFromRemote = () => {
+    if (memoryMode || !hydrated || reloadingRef.current) return;
+    if (streaming || uploading || persistTimerRef.current) return;
+
+    reloadingRef.current = true;
+    api
+      .loadChatState()
+      .then((data) => {
+        // 拉取期间本地又产生了改动 / 开始了流式回复 / 正在落库 → 丢弃这次结果
+        if (persistTimerRef.current || abortRef.current || api.isSavingChatState()) {
+          return;
+        }
+        applyRemoteState(data, true);
+      })
+      .catch(() => {
+        // 拉取失败保留当前数据
+      })
+      .finally(() => {
+        reloadingRef.current = false;
+      });
+  };
+
+  // 窗口重新获得焦点 / 重新可见时同步云端数据。
+  // 监听只注册一次，回调通过 ref 读取最新的判断条件（streaming / uploading 等）
+  const reloadRef = useRef<() => void>(() => {});
+  useEffect(() => {
+    reloadRef.current = reloadFromRemote;
+  });
+
+  useEffect(() => {
+    const sync = () => reloadRef.current();
+    const onVisible = () => {
+      if (document.visibilityState === "visible") sync();
+    };
+    window.addEventListener("focus", sync);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener("focus", sync);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, []);
+
+  // 订阅云端变更（Supabase Realtime）：另一端写完立刻刷新本端，
+  // 不必等切窗口。聚焦刷新保留为兜底（例如订阅断开或事件被抑制时）。
+  useEffect(() => {
+    if (memoryMode || !hydrated) return;
+    return api.subscribeChatChanges(() => reloadRef.current());
+  }, [hydrated, memoryMode]);
 
   // 启动时加载数据：supabase 模式从云端拉取；memory 模式保持空状态
   useEffect(() => {
@@ -154,9 +232,7 @@ export default function Chat({
         }
         const data = await api.loadChatState();
         if (cancelled) return;
-        setProjects(data.projects);
-        setConversations(data.conversations);
-        setActiveId(data.conversations[0]?.id ?? null);
+        applyRemoteState(data, false);
       } catch {
         // 加载失败按空状态处理
       } finally {
@@ -169,6 +245,61 @@ export default function Chat({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /**
+   * 处理保存结果：
+   * - 自动合并的会话：把本地消息换成云端+本端的合并结果（否则下次保存会把它覆盖回去）
+   * - 无法自动合并的冲突：排队交给用户裁决
+   */
+  const handleSaveOutcome = (outcome: api.SaveOutcome) => {
+    if (outcome.merged.length > 0) {
+      const mergedMessages = new Map(
+        outcome.merged.map((item) => [item.conversationId, item.messages])
+      );
+      setConversations((prev) =>
+        prev.map((c) => {
+          const messages = mergedMessages.get(c.id);
+          return messages ? { ...c, messages } : c;
+        })
+      );
+      setMergedHint(true);
+      window.setTimeout(() => setMergedHint(false), 6000);
+    }
+
+    if (outcome.conflicts.length > 0) {
+      setConflicts((prev) => {
+        const queued = new Set(prev.map((c) => c.conversationId));
+        return [
+          ...prev,
+          ...outcome.conflicts.filter((c) => !queued.has(c.conversationId)),
+        ];
+      });
+    }
+  };
+
+  /** 冲突裁决：保留本端版本（强制覆盖云端）或采用另一端版本（重新拉取） */
+  const resolveConflict = (choice: "mine" | "theirs") => {
+    const conflict = conflicts[0];
+    if (!conflict) return;
+    setConflicts((prev) => prev.slice(1));
+
+    if (choice === "theirs") {
+      // 采用另一端：直接同步云端（会同时把本地状态与基线都对齐到云端）
+      reloadFromRemote();
+      return;
+    }
+
+    // 保留本端：用「当前最新」的消息强制写入，而不是冲突发生时的快照
+    const current = conversationsRef.current.find(
+      (c) => c.id === conflict.conversationId
+    );
+    api
+      .forceSaveConversation(
+        conflict.conversationId,
+        current?.messages ?? conflict.mine
+      )
+      .catch((err: unknown) => window.alert((err as Error).message));
+  };
 
   // 仅在 supabase 模式生效：状态稳定后 600ms 自动保存（memory 模式不落库）
   useEffect(() => {
@@ -185,9 +316,10 @@ export default function Chat({
     }
     persistTimerRef.current = setTimeout(() => {
       persistTimerRef.current = null;
-      api.saveChatState({ projects, conversations }).catch((err) =>
-        console.error("自动保存失败", err)
-      );
+      api
+        .saveChatState({ projects, conversations })
+        .then(handleSaveOutcome)
+        .catch((err) => console.error("自动保存失败", err));
     }, 600);
 
     return () => {
@@ -195,6 +327,7 @@ export default function Chat({
         clearTimeout(persistTimerRef.current);
       }
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projects, conversations, hydrated, memoryMode]);
 
   // 滚动跟随：仅当发送消息、切换会话或本来就贴着底部时自动滚到底；
@@ -219,16 +352,21 @@ export default function Chat({
   }, [conversations]);
 
   // 桌面端：处理自定义协议唤起（deekai://open?conversation=..&draft=..）
-  // 携带的会话需已同步到本地才切换；草稿直接写入输入框
+  // 携带的会话若本地还没有（例如刚在网页端新建），先记下，等数据刷新后补切
   useEffect(() => {
     if (!hydrated) return;
 
     const apply = (link: DesktopDeeplink | null) => {
       if (!link) return;
       const target = link.conversationId;
-      if (target && conversationsRef.current.some((c) => c.id === target)) {
-        setActiveId(target);
-        followRef.current = true;
+      if (target) {
+        if (conversationsRef.current.some((c) => c.id === target)) {
+          pendingActiveIdRef.current = null;
+          setActiveId(target);
+          followRef.current = true;
+        } else {
+          pendingActiveIdRef.current = target;
+        }
       }
       if (link.draft) {
         setInput(link.draft);
@@ -243,6 +381,15 @@ export default function Chat({
       .catch(() => {});
     return unsubscribe;
   }, [hydrated]);
+
+  // 协议指定的会话同步进来后再切过去
+  useEffect(() => {
+    const target = pendingActiveIdRef.current;
+    if (!target || !conversations.some((c) => c.id === target)) return;
+    pendingActiveIdRef.current = null;
+    setActiveId(target);
+    followRef.current = true;
+  }, [conversations]);
 
   const conversationsOfProject = (projectId: string | null) =>
     conversations.filter((c) => c.projectId === projectId);
@@ -1038,6 +1185,42 @@ export default function Chat({
           <div className="main-hint">
             <Monitor size={14} />
             已尝试唤起桌面端；若未安装，请先运行 DeekAI 安装包（浏览器首次会询问是否允许打开）。
+          </div>
+        ) : null}
+
+        {conflict ? (
+          <div className="main-hint conflict-hint">
+            <AlertTriangle size={14} />
+            <span className="conflict-text">
+              「{conflict.title}」在另一台设备上也有改动，无法自动合并：
+              这边 {conflict.mine.length} 条消息，另一台设备 {conflict.theirs.length} 条消息。要保留哪一份？
+            </span>
+            <button
+              className="hint-action"
+              onClick={() => resolveConflict("mine")}
+            >
+              保留我这边的
+            </button>
+            <button
+              className="hint-action"
+              onClick={() => resolveConflict("theirs")}
+            >
+              用另一台设备的
+            </button>
+          </div>
+        ) : null}
+
+        {conflicts.length > 1 ? (
+          <div className="main-hint">
+            <AlertTriangle size={14} />
+            还有 {conflicts.length - 1} 个会话存在同类冲突，处理完当前这个会继续提示。
+          </div>
+        ) : null}
+
+        {mergedHint ? (
+          <div className="main-hint">
+            <Sparkles size={14} />
+            已把另一台设备上的新消息合并进当前会话。
           </div>
         ) : null}
 

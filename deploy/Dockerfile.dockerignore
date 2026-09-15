@@ -1,0 +1,40 @@
+# 构建上下文排除规则（构建上下文是项目根目录）
+#
+# 文件名必须是 <Dockerfile 名>.dockerignore 才会被 BuildKit 认作该 Dockerfile 专用规则；
+# 如果发现构建时上下文很大（本机带 node_modules 时），说明没被识别，
+# 把本文件复制到项目根并改名成 .dockerignore 即可。
+#
+# 注意：out/web 与 out/server 是要打进镜像的产物，不能排除。
+
+node_modules
+out/main
+out/preload
+out/renderer
+release
+release-advanced
+build
+.electron-cache
+.electron-builder-cache
+.dev-profile
+server-data
+.git
+.gitignore
+*.log
+*.tgz
+
+# 源码与配置不需要上传（镜像里只保留产物）
+src
+scripts
+docs
+supabase
+electron.vite.config.ts
+electron-builder.yml
+electron-builder.advanced.yml
+tsconfig.json
+tsconfig.node.json
+tsconfig.web.json
+vite.web.config.ts
+app-config.json
+app-config.advanced.json
+.env
+.env.local

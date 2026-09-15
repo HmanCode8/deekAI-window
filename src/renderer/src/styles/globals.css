@@ -2347,10 +2347,47 @@ body {
   border-bottom: 1px solid #dbeafe;
 }
 
+/* 消息冲突提示：文案可能较长，允许换行并让按钮靠右 */
+.conflict-hint {
+  flex-wrap: wrap;
+  background: #fff7ed;
+  color: #b45309;
+  border-bottom-color: #fed7aa;
+}
+
+.conflict-text {
+  flex: 1;
+  min-width: 240px;
+  line-height: 1.5;
+}
+
+.hint-action {
+  padding: 4px 10px;
+  font-size: 12px;
+  font-family: inherit;
+  color: inherit;
+  background: transparent;
+  border: 1px solid currentColor;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.hint-action:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
 [data-theme="dark"] .main-hint {
   background: rgba(59, 130, 246, 0.14);
   color: #93c5fd;
   border-bottom-color: rgba(59, 130, 246, 0.3);
+}
+
+/* 必须排在深色 .main-hint 之后：同权重下后写的生效 */
+[data-theme="dark"] .conflict-hint {
+  background: rgba(251, 146, 60, 0.14);
+  color: #fdba74;
+  border-bottom-color: rgba(251, 146, 60, 0.3);
 }
 
 .settings-account {

@@ -39,7 +39,7 @@ export default function Onboarding({
             </span>
             <div>
               <b>配置文件（可选）</b>
-              <p>也支持在应用目录放置 .env（含 DEEPSEEK_API_KEY / SUPABASE_* 等，参见 .env.example）。</p>
+              <p>也支持在应用目录放置 .env（填写 SUPABASE_URL / SUPABASE_ANON_KEY 等）。</p>
             </div>
           </div>
         </div>

@@ -5,9 +5,8 @@
     { "path": "./tsconfig.web.json" }
   ],
   "compilerOptions": {
-    "baseUrl": ".",
     "paths": {
-      "@shared/*": ["src/shared/*"]
+      "@shared/*": ["./src/shared/*"]
     }
   }
 }

@@ -12,7 +12,15 @@ import type {
   WritableConfig,
 } from "@shared/bridge-api";
 import { bridge } from "./bridge";
-import { loadChatState as loadState, saveChatState as saveState } from "./persistence";
+import {
+  loadChatState as loadState,
+  isSaving as isSavingState,
+  forceSaveConversation as forceSaveState,
+  saveChatState as saveState,
+  subscribeChatChanges as subscribeChanges,
+} from "./persistence";
+import type { SaveOutcome } from "./persistence";
+export type { ChatConflict, SaveOutcome } from "./persistence";
 import { getSupabase } from "./supabase";
 
 /**
@@ -119,8 +127,32 @@ export async function loadChatState(): Promise<ChatState> {
   return loadState(getSupabase());
 }
 
-export async function saveChatState(state: ChatState): Promise<void> {
-  await saveState(state, getSupabase());
+export async function saveChatState(state: ChatState): Promise<SaveOutcome> {
+  return saveState(state, getSupabase());
+}
+
+/**
+ * 冲突裁决：用户选择「保留我这边的」，把本端消息强制写回云端
+ * （会覆盖另一端对同一会话消息的改动，由用户明确决定）。
+ */
+export async function forceSaveConversation(
+  conversationId: string,
+  messages: ChatMessage[]
+): Promise<void> {
+  await forceSaveState(conversationId, messages, getSupabase());
+}
+
+/** 是否有落库请求正在飞行中（避免用刚拉到的旧数据覆盖本地刚做的改动） */
+export function isSavingChatState(): boolean {
+  return isSavingState();
+}
+
+/**
+ * 订阅云端会话变更（Supabase Realtime）：任意端写入后回调触发，返回取消订阅函数。
+ * 桌面端与网页端走同一条路径（都用渲染进程的 Supabase 客户端）。
+ */
+export function subscribeChatChanges(onChange: () => void): () => void {
+  return subscribeChanges(getSupabase(), onChange);
 }
 
 export function openExternal(url: string): void {
